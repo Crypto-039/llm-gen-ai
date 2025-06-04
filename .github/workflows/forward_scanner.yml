@@ -1,0 +1,159 @@
+# Weekly forward scanner for proactive vulnerability detection
+name: Forward Scanner
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # Every Monday at 2 AM
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install feedparser requests beautifulsoup4
+    
+    - name: Run CVE Scanner
+      run: |
+        # NOVEL: Proactive CVE scanning with patch generation
+        python scripts/forward_scanner.py \
+          --feeds cve,npm,pypi \
+          --severity critical,high \
+          --dry-run \
+          --output-format json
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Generate Patch Candidates
+      run: |
+        python scripts/generate_patches.py \
+          --input cve_scan_results.json \
+          --max-patches 5 \
+          --confidence-threshold 0.7
+    
+    - name: Create Issue on High Risk Findings
+      if: success()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // NOVEL: Automated issue creation for high-risk findings
+          if (fs.existsSync('high_risk_findings.json')) {
+            const findings = JSON.parse(fs.readFileSync('high_risk_findings.json', 'utf8'));
+            
+            for (const finding of findings) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🚨 High Risk CVE: ${finding.cve_id}`,
+                body: `
+                ## CVE Details
+                - **CVE ID**: ${finding.cve_id}
+                - **Severity**: ${finding.severity}
+                - **Impact Score**: ${finding.impact_score}
+                
+                ## Suggested Patch
+                \`\`\`diff
+                ${finding.suggested_patch}
+                \`\`\`
+                
+                ## Automated Analysis
+                ${finding.analysis}
+                
+                *This issue was automatically created by the Forward Scanner*
+                `,
+                labels: ['security', 'high-priority', 'automated']
+              });
+### `.github/workflows/shadow_prod.yml` - Shadow production traffic mirroring
+```yaml
+# Nightly shadow production traffic for unbiased evaluation
+name: Shadow Production Traffic
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # Every night at 1 AM
+  workflow_dispatch:
+
+jobs:
+  shadow_traffic:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install prometheus_client
+    
+    - name: Configure Shadow Environment
+      run: |
+        # NOVEL: Create isolated shadow environment
+        docker network create shadow-net
+        
+        # Start shadow version of the application
+        docker run -d \
+          --name shadow-app \
+          --network shadow-net \
+          -e OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }} \
+          -e SHADOW_MODE=true \
+          -p 8001:8000 \
+          $(docker build -q .)
+    
+    - name: Run Traffic Mirroring
+      run: |
+        python scripts/shadow_traffic.py \
+          --source-logs prod_traffic_sample.json \
+          --mirror-percentage 0.1 \
+          --shadow-endpoint http://localhost:8001 \
+          --duration 3600 \
+          --output shadow_results.json
+      env:
+        SHADOW_MODE: true
+    
+    - name: Analyze Shadow Results
+      run: |
+        # NOVEL: Comprehensive shadow traffic analysis
+        python scripts/analyze_shadow.py \
+          --results shadow_results.json \
+          --baseline prod_baseline.json \
+          --metrics-output shadow_metrics.json
+    
+    - name: Generate Performance Report
+      run: |
+        python scripts/generate_report.py \
+          --shadow-metrics shadow_metrics.json \
+          --format markdown \
+          --output shadow_performance_report.md
+    
+    - name: Upload Shadow Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: shadow-traffic-results
+        path: |
+          shadow_results.json
+          shadow_metrics.json
+          shadow_performance_report.md
+    
+    - name: Update Performance Dashboard
+      run: |
+        # NOVEL: Real-time dashboard updates
+        python scripts/update_dashboard.py \
+          --metrics shadow_metrics.json \
+          --dashboard-url ${{ secrets.DASHBOARD_URL }}
